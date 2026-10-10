@@ -8,7 +8,7 @@ This is an independently maintained project for OpenCode v2 (`@opencode/plugin` 
 
 ## Install from GitHub Packages
 
-The package is `@mortezaprk/opencode-auto-mode`. Publishing is configured, but the first release must be published before these registry install steps work.
+The package is `@mortezaprk/opencode-auto-mode`, published to GitHub Packages.
 
 Add this line to your user `~/.npmrc`:
 
