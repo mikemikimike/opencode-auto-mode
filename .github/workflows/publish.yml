@@ -1,4 +1,4 @@
-name: Publish GitHub package
+name: Publish npm package
 on:
   release:
     types: [published]
@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '24'
       - run: git merge-base --is-ancestor HEAD origin/main
-      - run: node --input-type=module -e 'import fs from "node:fs"; const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); if (process.env.RELEASE_TAG !== `v${pkg.version}` || pkg.name !== "@mortezaprk/opencode-auto-mode") process.exit(1);'
+      - run: node --input-type=module -e 'import fs from "node:fs"; const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); if (process.env.RELEASE_TAG !== `v${pkg.version}` || pkg.name !== "@mortz.prk/opencode-auto-mode") process.exit(1);'
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
       - run: npm exec --yes --package=bun@1.4.3 -- bun install --frozen-lockfile --ignore-scripts
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -42,8 +42,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-          registry-url: https://npm.pkg.github.com
-          scope: '@mortezaprk'
-      - run: npm publish --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          registry-url: https://registry.npmjs.org
+          scope: '@mortz.prk'
+      - run: npm install --global npm@11
+      - run: npm publish --access public --ignore-scripts

@@ -1,6 +1,6 @@
 {
-  "name": "@mortezaprk/opencode-auto-mode",
-  "version": "0.1.0",
+  "name": "@mortz.prk/opencode-auto-mode",
+  "version": "0.1.1",
   "description": "Configurable automatic permission review for OpenCode v2.",
   "author": {
     "name": "Andrew Mellen",
@@ -11,7 +11,8 @@
     "url": "git+https://github.com/mortezaPRK/opencode-auto-mode.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "type": "module",
   "license": "MIT",

@@ -6,23 +6,11 @@ OpenCode's permission prompts can interrupt routine work. This plugin reviews ac
 
 This is an independently maintained project for OpenCode v2 (`@opencode/plugin` 2.0). **Review applies to all agents by default**, including Build and Plan. An Auto agent is optional; adding one does not limit review unless you also configure `options.agents`.
 
-## Install from GitHub Packages
+## Install from npm
 
-The package is `@mortezaprk/opencode-auto-mode`, published to GitHub Packages.
+The public npm package is `@mortz.prk/opencode-auto-mode`.
 
-Add this line to your user `~/.npmrc`:
-
-```ini
-@mortezaprk:registry=https://npm.pkg.github.com
-```
-
-Authenticate with your GitHub username and a personal access token (classic) with `read:packages`, using the token as the password:
-
-```sh
-npm login --scope=@mortezaprk --registry=https://npm.pkg.github.com --auth-type=legacy
-```
-
-Keep registry credentials in your user configuration. Add the plugin to your global `~/.config/opencode/opencode.jsonc` using an example below. OpenCode installs the package; no separate project dependency is needed. Restart the service after changing plugins:
+Add the plugin to your global `~/.config/opencode/opencode.jsonc` using an example below. OpenCode installs the package from npm; no login, registry configuration, or separate project dependency is needed. Restart the service after changing plugins:
 
 ```sh
 opencode service restart
@@ -38,7 +26,7 @@ This reviews **all agents** because `agents` is omitted. Built-in checks allow s
 {
   "plugins": [
     {
-      "package": "@mortezaprk/opencode-auto-mode",
+      "package": "@mortz.prk/opencode-auto-mode",
       "options": {
         "review": "all"
       }
@@ -57,7 +45,7 @@ This also reviews **all agents**. `pwd` passes the static checks, `git status --
 {
   "plugins": [
     {
-      "package": "@mortezaprk/opencode-auto-mode",
+      "package": "@mortz.prk/opencode-auto-mode",
       "options": {
         "review": "all",
         "classifier": {
@@ -100,7 +88,7 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
 {
   "plugins": [
     {
-      "package": "@mortezaprk/opencode-auto-mode",
+      "package": "@mortz.prk/opencode-auto-mode",
       "options": {
         "review": "all",
         "classifier": {
@@ -141,7 +129,7 @@ Add an Auto agent if you want a separate agent for automatic review, then restri
   },
   "plugins": [
     {
-      "package": "@mortezaprk/opencode-auto-mode",
+      "package": "@mortz.prk/opencode-auto-mode",
       "options": {
         "review": "all",
         "agents": ["auto"]
@@ -154,6 +142,25 @@ Add an Auto agent if you want a separate agent for automatic review, then restri
 Select Auto alongside Build and Plan. To review all agents while keeping Auto available, omit `options.agents`.
 
 Keep ordinary OpenCode permission rules requiring approval for sensitive actions so prompts remain available when the plugin is disabled. `trusted`, `blocks`, and `exceptions` replace the corresponding model-review policy lists. Configure these globally. The TUI integration shows review status and provides manual allow/deny commands.
+
+## Publishing releases
+
+The package is public on npm. GitHub releases trigger `.github/workflows/publish.yml`, which uses npm trusted publishing through GitHub Actions OIDC. No npm token is needed in repository secrets.
+
+For the first publication, enable two-factor authentication on the `mortz.prk` npm account. Merge the migration at version `0.1.1` to `main`, check out that commit, and run the project checks before publishing:
+
+```sh
+bun install --frozen-lockfile --ignore-scripts
+bun test
+bun run typecheck
+npm pack --dry-run
+npm login --registry=https://registry.npmjs.org
+npm publish --access public --ignore-scripts --registry=https://registry.npmjs.org
+```
+
+After the package exists, configure its [npm trusted publisher](https://docs.npmjs.com/trusted-publishers/) with GitHub owner `mortezaPRK`, repository `opencode-auto-mode`, and workflow filename `publish.yml`. Leave the environment field empty and explicitly allow direct `npm publish`.
+
+For the first automated publication, bump the manifest to `0.1.2`, refresh the lockfile, merge to `main`, and publish GitHub release `v0.1.2` within two days of creating the trusted publisher. For later releases, update the version, merge to `main`, and publish a GitHub release with the matching `v<version>` tag. The workflow requires the tag's version to match `package.json` and its commit to be on `main`; it runs tests and a typecheck before publishing.
 
 ## Credit
 

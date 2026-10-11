@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@mortezaprk/opencode-auto-mode",
+      "name": "@mortz.prk/opencode-auto-mode",
       "dependencies": {
         "@bufbuild/cel": "0.6.1",
         "@bufbuild/protobuf": "2.16.0",
