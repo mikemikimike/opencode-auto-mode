@@ -10,8 +10,6 @@ const MAX_RESOURCE = 48;
 const POLL_MS = 1_000;
 const STALE_MS = 90_000;
 
-type Reply = "once" | "reject";
-
 type Pending = {
   requestID: string;
   sessionID: string;
@@ -99,7 +97,7 @@ function Badge(props: {
 export default Plugin.define({
   id: "opencode-auto-mode",
   setup: async (ctx) => {
-    const options = ctx.options as Record<string, any>;
+    const options = ctx.options as Record<string, unknown>;
     const keybinds = (options.keybinds ?? {}) as Record<string, unknown>;
     const allowKey = str(keybinds.allow, "ctrl+alt+a");
     const denyKey = str(keybinds.deny, "ctrl+alt+d");
