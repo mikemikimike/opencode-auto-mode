@@ -15,7 +15,9 @@ export function createLogger(filename: string): Logger {
       const size = fs.fstatSync(fd).size;
       if (size > 1_048_576) fs.ftruncateSync(fd, 0);
       fs.writeSync(fd, `[${stamp()}] ${line.slice(0, 1024).replace(/[\r\n]/g, " ")}\n`);
-    } catch {} finally { if (fd !== undefined) fs.closeSync(fd); }
+    } catch {
+      // Logging is best effort and must not interrupt permission review.
+    } finally { if (fd !== undefined) fs.closeSync(fd); }
   };
   return {
     log: append,

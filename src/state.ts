@@ -55,5 +55,6 @@ export function recordDecision(record: DecisionRecord): void {
     fs.ftruncateSync(fd, 0);
     fs.writeSync(fd, data, 0);
   } catch {
+    // Badge state is best effort and must not interrupt permission review.
   } finally { if (fd !== undefined) fs.closeSync(fd); }
 }

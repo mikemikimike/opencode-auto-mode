@@ -24,7 +24,7 @@ describe("CEL rules", () => {
     assert.equal((await compositeDecision([rules("true")], { ...request, resources: [] }, unused)).decision, "ask");
   });
   it("treats resource contents as data rather than expression source", async () => {
-    const malicious = 'pwd\") || true || resource == (\"';
+    const malicious = 'pwd") || true || resource == ("';
     assert.equal((await compositeDecision([rules('resource == "pwd"')], { ...request, resources: [malicious] }, unused)).decision, "ask");
   });
   it("escalates evaluation errors and nonboolean results before later allows", async () => {

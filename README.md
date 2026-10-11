@@ -152,6 +152,7 @@ For the first publication, enable two-factor authentication on the `mortz.prk` n
 ```sh
 bun install --frozen-lockfile --ignore-scripts
 bun test
+bun run lint
 bun run typecheck
 npm pack --dry-run
 npm login --registry=https://registry.npmjs.org

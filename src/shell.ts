@@ -10,7 +10,7 @@ const WRAPPERS = new Set(["env", "command", "builtin", "exec", "eval", "source",
 const BALANCED_QUOTES = /^(?:[^'"\\]|\\[^\r\n]|'[^']*'|"(?:[^"\\]|\\[^\r\n])*")*$/;
 
 export function shellWords(command: string): string[] | undefined {
-  if (!command || command.length > 4096 || /[$`~\r\n\0{}\[\]]/.test(command) ||
+  if (!command || command.length > 4096 || /[$`~\r\n\0{}[\]]/.test(command) ||
       /[^\S \t]/.test(command) || !BALANCED_QUOTES.test(command)) return undefined;
   try {
     const words = parse(command);
