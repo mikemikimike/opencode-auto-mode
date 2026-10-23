@@ -45,26 +45,29 @@ describe("typed providers", () => {
         return new Response(JSON.stringify({ answers: [{ ...decision, name: "permission", probabilities: Object.entries(decision.probabilities).map(([value, probability]) => ({ value, probability })) }] }));
       }) as typeof fetch;
       const stage: ProviderStage = { type: "openai-decision", apiKeyEnv: "AUTO_MODE_TEST_KEY" };
-      assert.equal((await providerDecision(stage, request, defaultPolicy(), fetcher))?.decision, "allow");
-      assert.equal((await providerDecision(stage, request, defaultPolicy(), mock({ answers: [{ type: "refusal", name: "permission" }] })))?.decision, "ask");
-      assert.equal((await providerDecision(stage, request, defaultPolicy(), mock({ answers: [{ ...decision, name: "other" }] })))?.decision, "ask");
+      assert.equal((await providerDecision(stage, request, defaultPolicy(), fetcher)).decision, "allow");
+      assert.equal((await providerDecision(stage, request, defaultPolicy(), mock({ answers: [{ type: "refusal", name: "permission" }] }))).decision, "abstain");
+      assert.equal((await providerDecision(stage, request, defaultPolicy(), mock({ answers: [{ ...decision, name: "other" }] }))).decision, "abstain");
     } finally { delete process.env.AUTO_MODE_TEST_KEY; }
   });
-  it("rejects invalid or contradictory answers and oversized bodies", async () => {
+  it("abstains on invalid or contradictory answers and oversized bodies", async () => {
     for (const invalid of [null, { ...decision, choice: ["allow"] }, { ...decision, choice: "ALLOW" },
       { ...decision, confidence: "1" }, { ...decision, confidence: 2 },
       { ...decision, probabilities: { allow: 1, deny: 1, ask: 1 } },
       { ...decision, probabilities: { allow: 0.1, deny: 0.9, ask: 0 } },
       { ...decision, probabilities: { allow: 1 } }])
-      assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone(invalid))))?.decision, "ask");
-    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock({ text: "x".repeat(70_000) })))?.decision, "ask");
-    assert.equal((await providerDecision({ type: "laya" }, { ...request, resources: ["x".repeat(70_000)] }, defaultPolicy(), () => { throw new Error("must not fetch"); }))?.decision, "ask");
+      assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone(invalid)))).decision, "abstain");
+    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock({ text: "x".repeat(70_000) }))).decision, "abstain");
+    assert.equal((await providerDecision({ type: "laya" }, { ...request, resources: ["x".repeat(70_000)] }, defaultPolicy(), () => { throw new Error("must not fetch"); })).decision, "abstain");
   });
-  it("abstains on low confidence and keeps explicit asks terminal", async () => {
-    assert.equal(await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone({ ...decision, confidence: 0.5 }))), undefined);
-    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone({ type: "choice", choice: "ask", confidence: 0.1, probabilities: { ask: 0.5, allow: 0.25, deny: 0.25 } }))))?.decision, "ask");
+  it("abstains on low-confidence allows and asks on low-confidence denies", async () => {
+    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone({ ...decision, confidence: 0.5 })))).decision, "abstain");
+    const lowConfidenceDeny = { type: "choice", choice: "deny", confidence: 0.5, probabilities: { deny: 0.5, allow: 0.25, ask: 0.25 } };
+    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone(lowConfidenceDeny)))).decision, "ask");
+    const explicitAsk = { type: "choice", choice: "ask", confidence: 0.1, probabilities: { ask: 0.5, allow: 0.25, deny: 0.25 } };
+    assert.equal((await providerDecision({ type: "laya" }, request, defaultPolicy(), mock(systemone(explicitAsk)))).decision, "ask");
   });
-  it("rejects redirects and times out a local HTTP body", async () => {
+  it("abstains on redirects and timeouts", async () => {
     let redirect = true;
     let requests = 0;
     const server = createServer((req, res) => {
@@ -77,10 +80,10 @@ describe("typed providers", () => {
     const address = server.address();
     assert.ok(address && typeof address !== "string");
     try {
-      assert.equal((await providerDecision({ type: "laya", endpoint: `http://127.0.0.1:${address.port}/v1/systemone` }, request, defaultPolicy()))?.decision, "ask");
+      assert.equal((await providerDecision({ type: "laya", endpoint: `http://127.0.0.1:${address.port}/v1/systemone` }, request, defaultPolicy())).decision, "abstain");
       assert.equal(requests, 1);
       redirect = false;
-      assert.equal((await providerDecision({ type: "laya", endpoint: `http://127.0.0.1:${address.port}/v1/systemone`, timeoutMs: 30 }, request, defaultPolicy()))?.decision, "ask");
+      assert.equal((await providerDecision({ type: "laya", endpoint: `http://127.0.0.1:${address.port}/v1/systemone`, timeoutMs: 30 }, request, defaultPolicy())).decision, "abstain");
     } finally { server.closeAllConnections(); server.close(); }
   });
 });

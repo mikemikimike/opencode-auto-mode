@@ -176,7 +176,7 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
 | `laya` | Run a compatible local `/v1/systemone` service; optionally set `LAYA_API_KEY`. Only loopback endpoints are accepted. |
 | `llm` | Uses OpenCode's default model, or the configured reviewer model. |
 
-A valid provider allow/deny result below `minConfidence` continues to the next stage. An explicit ask, provider error, timeout, or invalid response requires manual approval and stops the pipeline. Export API keys in the environment of the OpenCode service. Provider stages also accept `model`, `apiKeyEnv`, and `timeoutMs`.
+Stages return one of four outcomes. `allow`, `deny`, and `ask` are terminal. `abstain` continues to the next stage. A low-confidence allow abstains, while a low-confidence deny requires manual approval rather than falling through to a possible allow. Provider errors, timeouts, refusals, and invalid responses also abstain so another reviewer can try; if no stage decides, the result is `ask`. Export API keys in the environment of the OpenCode service. Provider stages also accept `model`, `apiKeyEnv`, and `timeoutMs`.
 
 ## Tips: an optional Auto agent
 

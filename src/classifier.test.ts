@@ -25,18 +25,31 @@ describe("composite classifiers", () => {
     stages.push({ type: "rules", rules: [{ expression: 'action == "shell"', decision: "deny" }] });
     assert.equal((await compositeDecision(stages, { action: "shell", resources: [] }, unused)).decision, "deny");
   });
-  it("falls through on abstention and stops on human escalation", async () => {
+  it("falls through on abstention and stops on terminal outcomes", async () => {
     const stages: ClassifierStage[] = [{ type: "jev" }, { type: "llm" }];
     const seen: string[] = [];
     const result = await compositeDecision(stages, request, async (stage) => {
       seen.push(stage.type);
-      return stage.type === "jev" ? undefined : { decision: "allow", reason: "authorized" };
+      return stage.type === "jev" ? { decision: "abstain", reason: "no confident answer" } : { decision: "allow", reason: "authorized" };
     });
     assert.equal(result.decision, "allow");
     assert.deepEqual(seen, ["jev", "llm"]);
-    seen.length = 0;
-    await compositeDecision(stages, request, async (stage) => { seen.push(stage.type); return { decision: "ask", reason: "uncertain" }; });
-    assert.deepEqual(seen, ["jev"]);
+    for (const decision of ["allow", "deny", "ask"] as const) {
+      seen.length = 0;
+      const terminal = await compositeDecision(stages, request, async (stage) => {
+        seen.push(stage.type);
+        return { decision, reason: "terminal" };
+      });
+      assert.equal(terminal.decision, decision);
+      assert.deepEqual(seen, ["jev"]);
+    }
+  });
+  it("asks when every stage abstains", async () => {
+    const stages: ClassifierStage[] = [{ type: "jev" }, { type: "llm" }];
+    const result = await compositeDecision(stages, request, async () => ({ decision: "abstain", reason: "no answer" }));
+    assert.equal(result.decision, "ask");
+    assert.equal(result.stage, "none");
+    assert.match(result.reason, /no answer/);
   });
   it("rejects malformed config and unsafe local endpoints", () => {
     for (const value of [null, { classifer: {} }, { classifier: { stages: [] } },

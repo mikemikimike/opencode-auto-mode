@@ -50,6 +50,19 @@ describe("OpenCode permission hook", () => {
     assert.doesNotMatch(request.message!, /private error/);
     await failed.cleanup();
   });
+  it("falls through to the next model reviewer when one is unavailable", async () => {
+    const host = await setup({ classifier: { stages: [{ type: "llm" }, { type: "llm" }] } });
+    let calls = 0;
+    host.ctx.generate.text = async () => {
+      if (calls++ === 0) throw new Error("temporary failure");
+      return { text: "ALLOW" };
+    };
+    const pending = event("allow");
+    await host.evaluate(pending);
+    assert.equal(pending.effect, "allow");
+    assert.equal(calls, 2);
+    await host.cleanup();
+  });
   it("applies configured agent and prompt scope", async () => {
     const host = await setup({ agents: ["auto"], review: "prompts" });
     const build = { ...event("allow"), agent: "build" };

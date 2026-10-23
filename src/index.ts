@@ -4,7 +4,7 @@ import { recordDecision } from "./state.js";
 import { defaultPolicy } from "./policy.js";
 import { extractTranscript } from "./transcript.js";
 import { scanResultContent, withInjectionWarning } from "./probe.js";
-import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult } from "./reviewer.js";
+import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult, type StageResult } from "./reviewer.js";
 import { parseOptions, stagesFor, type ReviewerModel } from "./config.js";
 import { compositeDecision } from "./classifier.js";
 import { providerDecision } from "./providers.js";
@@ -55,8 +55,12 @@ export default Plugin.define({
           if (!request.transcript?.startsWith("User messages") || request.transcript.includes("…"))
             return { decision: "ask", reason: "User authorization context is unavailable" };
           const policy = defaultPolicy(options);
-          return stage.type === "llm" ? llmDecision(ctx, request, policy, stage.model ?? options?.model) :
-            providerDecision(stage, request, policy);
+          try {
+            return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model ?? options?.model) :
+              await providerDecision(stage, request, policy);
+          } catch {
+            return { decision: "abstain", reason: `${stage.type} reviewer unavailable` };
+          }
         });
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
@@ -102,7 +106,7 @@ interface ReviewerContext {
   generate: { text(input: { prompt: string; model?: ReviewerModel | null }): Promise<{ text: string }> };
 }
 
-async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: ReviewerModel): Promise<ReviewResult> {
+async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: ReviewerModel): Promise<StageResult> {
   const prompt = buildStage1Prompt(request, policy);
   if (Buffer.byteLength(prompt) > 65_536) return { decision: "ask", reason: "Request too large for automatic review" };
   const triage = await withTimeout(ctx.generate.text({ prompt, model: model ?? null }), 30_000);

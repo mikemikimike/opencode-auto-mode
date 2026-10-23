@@ -1,5 +1,5 @@
 import { object, localEndpoint, type ClassifierStage } from "./config.js";
-import { buildReviewPrompt, type PermissionRequest, type ReviewResult, type Decision } from "./reviewer.js";
+import { buildReviewPrompt, type PermissionRequest, type StageResult, type Decision } from "./reviewer.js";
 import type { ReviewPolicy } from "./policy.js";
 
 export type ProviderStage = Extract<ClassifierStage, { type: "jev" | "openai-decision" | "laya" }>;
@@ -14,7 +14,7 @@ function probability(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function answer(value: unknown, stage: ProviderStage): ReviewResult | undefined {
+function answer(value: unknown, stage: ProviderStage): StageResult {
   if (!object(value) || value.type !== "choice" || typeof value.choice !== "string" || !Object.hasOwn(choices, value.choice) ||
       !probability(value.confidence) || !object(value.probabilities))
     throw new Error("Invalid decision response");
@@ -26,8 +26,11 @@ function answer(value: unknown, stage: ProviderStage): ReviewResult | undefined 
       probabilities[value.choice as Decision] < Math.max(...Object.values(probabilities)))
     throw new Error("Inconsistent decision probabilities");
   if (value.choice === "ask") return { decision: "ask", reason: `${stage.type} requested human review` };
-  if (value.confidence < (stage.minConfidence ?? 0.9) || probabilities[value.choice as Decision] < (stage.minConfidence ?? 0.9))
-    return undefined;
+  const threshold = stage.minConfidence ?? 0.9;
+  if (value.confidence < threshold || probabilities[value.choice as Decision] < threshold) {
+    if (value.choice === "deny") return { decision: "ask", reason: `${stage.type} returned a low-confidence deny` };
+    return { decision: "abstain", reason: `${stage.type} abstained below the confidence threshold` };
+  }
   return { decision: value.choice as Decision, reason: `${stage.type} decision (confidence ${value.confidence})` };
 }
 
@@ -56,7 +59,7 @@ export async function providerDecision(
   request: PermissionRequest,
   policy: ReviewPolicy,
   fetcher: typeof fetch = fetch,
-): Promise<ReviewResult | undefined> {
+): Promise<StageResult> {
   try {
     const openai = stage.type === "openai-decision";
     const endpoint = stage.type === "laya" ? localEndpoint(stage.endpoint ?? "http://127.0.0.1:8000/v1/systemone") :
@@ -87,7 +90,7 @@ export async function providerDecision(
     if (!Array.isArray(parsed.answers) || parsed.answers.length !== 1 || !object(parsed.answers[0]) ||
         parsed.answers[0].name !== "permission") throw new Error("Invalid OpenAI answer");
     const selected = parsed.answers[0];
-    if (selected.type === "refusal") return { decision: "ask", reason: "OpenAI declined the decision" };
+    if (selected.type === "refusal") return { decision: "abstain", reason: "OpenAI declined the decision" };
     if (!Array.isArray(selected.probabilities) || selected.probabilities.length !== 3)
       throw new Error("Invalid OpenAI probabilities");
     const distribution: Record<string, unknown> = {};
@@ -98,6 +101,6 @@ export async function providerDecision(
     }
     return answer({ ...selected, probabilities: distribution }, stage);
   } catch {
-    return { decision: "ask", reason: `${stage.type} unavailable or returned an invalid decision` };
+    return { decision: "abstain", reason: `${stage.type} unavailable or returned an invalid decision` };
   }
 }
