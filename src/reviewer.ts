@@ -16,6 +16,7 @@ export type Decision = "allow" | "deny" | "ask";
 export interface ReviewResult {
   decision: Decision;
   reason: string;
+  stage?: string;
 }
 
 export const DENY_SUFFIX = "Find a safer path and do not try to route around this block.";

@@ -167,6 +167,26 @@ Select Auto alongside Build and Plan. To review all agents while keeping Auto av
 
 Keep ordinary OpenCode permission rules requiring approval for sensitive actions so prompts remain available when the plugin is disabled. `trusted`, `blocks`, and `exceptions` replace the corresponding model-review policy lists. Configure these globally. The TUI integration shows review status and provides manual allow/deny commands.
 
+## Decision log and OTLP export (optional)
+
+Both are off by default. Neither stores transcripts or metadata; resources are truncated to 512 characters.
+
+```json
+{
+  "options": {
+    "auditLog": true,
+    "otlp": true
+  }
+}
+```
+
+- `auditLog`: `true` appends one JSON line per review to `$XDG_STATE_HOME/opencode-auto-mode/decisions.jsonl` (default `~/.local/state/...`); a string sets the path. The file is private (`0600`) and rotates to `.1` at 10 MB. Fields: `ts`, `reviewID`, `sessionID`, `agent`, `action`, `resources`, `hostEffect`, `decision`, `stage` (`static`, `shell-guard`, `rules`, `llm`, `none`, `error`), `reason`, `durationMs`.
+- `otlp`: `true` or `{ "endpoint", "headers", "timeoutMs" }` sends each decision as an OTLP/HTTP JSON log record to `<endpoint>/v1/logs`. The endpoint defaults to `OPENCODE_OTLP_ENDPOINT`, then `OTEL_EXPORTER_OTLP_ENDPOINT`; headers also come from `OPENCODE_OTLP_HEADERS` / `OTEL_EXPORTER_OTLP_HEADERS`. Use the HTTP port (usually 4318), not gRPC. Export is fire-and-forget and never delays a review.
+
+### Replaying recorded sessions
+
+`bun scripts/replay.ts [--days 14] [--session ID] [--agent auto|any] [--json]` runs recorded tool calls from the OpenCode database through your configured classifier. It opens the database read-only, executes nothing, makes no network calls, and stubs the LLM stage (reported as `llm?`).
+
 ## Publishing releases
 
 Open **Actions → Release npm package → Run workflow**, select `main`, choose `patch`, `minor`, or `major` (default: `patch`), and run it. This manual workflow runs tests, lint, and typecheck, increments `package.json`, checks the package, commits and tags the version, publishes to npm, and creates an immutable GitHub release with generated notes.

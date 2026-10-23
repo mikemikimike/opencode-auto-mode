@@ -8,6 +8,8 @@ import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withD
 import { parseOptions, stagesFor, type ReviewerModel } from "./config.js";
 import { compositeDecision } from "./classifier.js";
 import { providerDecision } from "./providers.js";
+import { createAuditLog } from "./audit.js";
+import { createOtlpExporter } from "./otlp.js";
 
 export type { AutoModeOptions, ClassifierStage, DecisionProvider, UserRule, ReviewerModel } from "./config.js";
 
@@ -18,6 +20,7 @@ export default Plugin.define({
     let options: ReturnType<typeof parseOptions> | undefined;
     try { options = parseOptions(ctx.options); }
     catch { log.log("Invalid configuration; automatic approval disabled"); }
+    const sinks = [createAuditLog(options?.auditLog), createOtlpExporter(options?.otlp)].filter((sink) => sink !== undefined);
     const counts = new Map<string, number>();
     let reviewCounter = 0;
     const permissionRegistration = await ctx.permission.hook("evaluate", async (event) => {
@@ -31,6 +34,9 @@ export default Plugin.define({
       if (options.review === "prompts" && event.effect !== "ask") return;
       const reviewID = `review-${process.pid}-${Date.now()}-${reviewCounter++}`;
       recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: "reviewing", action: event.action.slice(0, 128), reason: "", at: Date.now() });
+      const startedAt = Date.now();
+      const hostEffect = event.effect;
+      let failure: string | undefined;
       let result: ReviewResult;
       try {
         const info = await withTimeout(ctx.session.get({ sessionID: event.sessionID }), 3_000).catch(() => undefined);
@@ -52,8 +58,9 @@ export default Plugin.define({
           return stage.type === "llm" ? llmDecision(ctx, request, policy, stage.model ?? options?.model) :
             providerDecision(stage, request, policy);
         });
-      } catch {
-        result = { decision: "ask", reason: "Auto-mode review failed; please decide yourself" };
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+        result = { decision: "ask", reason: "Auto-mode review failed; please decide yourself", stage: "error" };
       }
       event.effect = result.decision;
       event.message = result.decision === "deny" ? withDenySuffix(result.reason) : result.reason;
@@ -63,6 +70,13 @@ export default Plugin.define({
         counts.set(event.sessionID, count);
         log.log(`Action denied (${count} in session)`);
       }
+      const auditRecord = {
+        ts: new Date().toISOString(), reviewID, sessionID: event.sessionID, agent: event.agent,
+        action: event.action, resources: [...event.resources], hostEffect,
+        decision: result.decision, stage: result.stage ?? "unknown", reason: result.reason,
+        durationMs: Date.now() - startedAt, ...(failure !== undefined ? { error: true, errorDetail: failure } : {}),
+      };
+      for (const sink of sinks) sink.write(auditRecord);
       recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: event.effect, reason: "", at: Date.now() });
     });
     const toolRegistration = await ctx.tool.hook("execute.after", (event) => {

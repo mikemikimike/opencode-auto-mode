@@ -1,6 +1,7 @@
 import type { PolicyOptions } from "./policy.js";
 import type { Decision } from "./reviewer.js";
 import { compileExpression } from "./rules.js";
+import { logsUrl, type OtlpOptions } from "./otlp.js";
 
 export type ReviewerModel = { id: string; providerID: string; variant?: string };
 export type UserRule = { expression: string; decision: Decision };
@@ -21,6 +22,8 @@ export interface AutoModeOptions extends PolicyOptions {
   review?: "all" | "prompts";
   agents?: string[];
   allowInProjectEdits?: boolean;
+  auditLog?: boolean | string;
+  otlp?: boolean | OtlpOptions;
   classifier?: { stages: ClassifierStage[] };
 }
 
@@ -55,6 +58,18 @@ export function localEndpoint(value: string): string {
   return url.href;
 }
 
+function otlp(value: unknown): value is OtlpOptions {
+  if (!object(value) || !only(value, ["endpoint", "headers", "timeoutMs"])) return false;
+  if (value.endpoint !== undefined) {
+    if (!text(value.endpoint)) return false;
+    try { logsUrl(value.endpoint); } catch { return false; }
+  }
+  if (value.headers !== undefined && (!object(value.headers) || Object.keys(value.headers).length > 32 ||
+      !Object.entries(value.headers).every(([key, header]) => /^[A-Za-z0-9-]{1,128}$/.test(key) && text(header)))) return false;
+  return value.timeoutMs === undefined || (typeof value.timeoutMs === "number" && Number.isInteger(value.timeoutMs) &&
+    value.timeoutMs >= 1 && value.timeoutMs <= 10_000);
+}
+
 function stage(value: unknown): value is ClassifierStage {
   if (!object(value)) return false;
   if (value.type === "static") return only(value, ["type", "allowInProjectEdits"]) &&
@@ -85,7 +100,7 @@ function stage(value: unknown): value is ClassifierStage {
 
 export function parseOptions(value: unknown): AutoModeOptions {
   if (!object(value)) throw new Error("Invalid auto-mode options");
-  if (!only(value, ["model", "review", "agents", "allowInProjectEdits", "classifier", "trusted", "blocks", "exceptions", "keybinds"]))
+  if (!only(value, ["model", "review", "agents", "allowInProjectEdits", "classifier", "trusted", "blocks", "exceptions", "keybinds", "auditLog", "otlp"]))
     throw new Error("Unknown auto-mode option");
   if (value.model !== undefined && !model(value.model)) throw new Error("Invalid reviewer model");
   if (value.review !== undefined && value.review !== "all" && value.review !== "prompts")
@@ -96,6 +111,9 @@ export function parseOptions(value: unknown): AutoModeOptions {
   }
   if (value.allowInProjectEdits !== undefined && typeof value.allowInProjectEdits !== "boolean")
     throw new Error("Invalid edit configuration");
+  if (value.auditLog !== undefined && typeof value.auditLog !== "boolean" && !text(value.auditLog))
+    throw new Error("Invalid audit log");
+  if (value.otlp !== undefined && typeof value.otlp !== "boolean" && !otlp(value.otlp)) throw new Error("Invalid OTLP options");
   if (value.classifier !== undefined && (!object(value.classifier) || !only(value.classifier, ["stages"]) ||
       !Array.isArray(value.classifier.stages) || value.classifier.stages.length === 0 ||
       value.classifier.stages.length > 16 || !value.classifier.stages.every(stage)))
