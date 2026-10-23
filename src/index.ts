@@ -5,13 +5,13 @@ import { defaultPolicy } from "./policy.js";
 import { extractTranscript } from "./transcript.js";
 import { scanResultContent, withInjectionWarning } from "./probe.js";
 import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult, type StageResult } from "./reviewer.js";
-import { parseOptions, parseReviewerModel, stagesFor, type ReviewerModelRef } from "./config.js";
+import { parseOptions, parseReviewerModel, type ReviewerModelRef } from "./config.js";
 import { compositeDecision } from "./classifier.js";
 import { decisionStage } from "./decisions.js";
 import { createAuditLog } from "./audit.js";
 import { createOtlpExporter } from "./otlp.js";
 
-export type { AutoModeOptions, ClassifierStage, DecisionProvider, DecisionStage, UserRule, ReviewerModel } from "./config.js";
+export type { AutoModeOptions, ClassifierStage, DecisionProvider, DecisionStage, ReviewerModel } from "./config.js";
 
 export default Plugin.define({
   id: "opencode-auto-mode",
@@ -24,14 +24,12 @@ export default Plugin.define({
     const counts = new Map<string, number>();
     let reviewCounter = 0;
     const permissionRegistration = await ctx.permission.hook("evaluate", async (event) => {
-      if (event.effect === "deny") return;
+      if (event.effect !== "ask") return;
       if (!options) {
         event.effect = "ask";
         event.message = "Invalid auto-mode configuration; please decide yourself";
         return;
       }
-      if (options.agents && (!event.agent || !options.agents.includes(event.agent))) return;
-      if (options.review === "prompts" && event.effect !== "ask") return;
       const reviewID = `review-${process.pid}-${Date.now()}-${reviewCounter++}`;
       recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: "reviewing", action: event.action.slice(0, 128), reason: "", at: Date.now() });
       const startedAt = Date.now();
@@ -46,7 +44,7 @@ export default Plugin.define({
           isDelegation: event.action === "task" || event.action === "subagent",
         };
         let contextLoaded = false;
-        result = await compositeDecision(stagesFor(options), request, async (stage) => {
+        result = await compositeDecision(options.classifiers, request, async (stage) => {
           if (!contextLoaded) {
             const messages = await withTimeout(ctx.session.context({ sessionID: event.sessionID }), 3_000);
             request.transcript = extractTranscript(messages);
@@ -54,9 +52,9 @@ export default Plugin.define({
           }
           if (!request.transcript?.startsWith("User messages") || request.transcript.includes("…"))
             return { decision: "ask", reason: "User authorization context is unavailable" };
-          const policy = defaultPolicy(options);
+          const policy = defaultPolicy(stage.policy);
           try {
-            return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model) :
+            return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model, info?.model) :
               await decisionStage(stage, request, policy);
           } catch {
             return { decision: "abstain", reason: `${stage.type} reviewer unavailable` };
@@ -106,8 +104,9 @@ interface ReviewerContext {
   generate: { text(input: { prompt: string; model?: ReviewerModelRef | null }): Promise<{ text: string }> };
 }
 
-async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: string): Promise<StageResult> {
-  const ref = model ? parseReviewerModel(model) : null;
+async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: string, sessionModel?: ReviewerModelRef): Promise<StageResult> {
+  const ref = model ? parseReviewerModel(model) : sessionModel;
+  if (!ref) return { decision: "abstain", reason: "Session model is unavailable; configure a reviewer model" };
   const prompt = buildStage1Prompt(request, policy);
   if (Buffer.byteLength(prompt) > 65_536) return { decision: "ask", reason: "Request too large for automatic review" };
   const triage = await withTimeout(ctx.generate.text({ prompt, model: ref }), 30_000);

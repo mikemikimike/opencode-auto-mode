@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createOtlpExporter, logsUrl, toLogRecord } from "./otlp.js";
 import { parseOptions } from "./config.js";
 
-const record = { ts: "2026-10-23T10:00:00.000Z", reviewID: "r", sessionID: "s", agent: "auto", action: "shell", resources: ["ls"], hostEffect: "ask", decision: "deny", stage: "static", reason: "no", durationMs: 4 };
+const record = { ts: "2026-10-23T10:00:00.000Z", reviewID: "r", sessionID: "s", agent: "build", action: "shell", resources: ["ls"], hostEffect: "ask", decision: "deny", stage: "static", reason: "no", durationMs: 4 };
 
 describe("OTLP exporter", () => {
   it("is off unless configured and has an endpoint", () => {
@@ -40,8 +40,9 @@ describe("OTLP exporter", () => {
     assert.deepEqual(attrs.find((a) => a.key === "stage")?.value, { stringValue: "static" });
   });
   it("validates options", () => {
-    assert.doesNotThrow(() => parseOptions({ otlp: { endpoint: "http://c:4318", headers: { authorization: "x" }, timeoutMs: 500 }, auditLog: "/tmp/a.jsonl" }));
-    assert.throws(() => parseOptions({ otlp: { endpoint: "ftp://c" } }));
-    assert.throws(() => parseOptions({ otlp: { bogus: 1 } }));
+    const classifiers = [{ type: "static" as const }];
+    assert.doesNotThrow(() => parseOptions({ classifiers, otlp: { endpoint: "http://c:4318", headers: { authorization: "x" }, timeoutMs: 500 }, auditLog: "/tmp/a.jsonl" }));
+    assert.throws(() => parseOptions({ classifiers, otlp: { endpoint: "ftp://c" } }));
+    assert.throws(() => parseOptions({ classifiers, otlp: { bogus: 1 } }));
   });
 });
