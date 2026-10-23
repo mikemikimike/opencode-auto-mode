@@ -74,10 +74,15 @@ describe("typed decisions", () => {
     assert.equal((await decisionStage({ type: "decision", model: "laya/local" }, request, defaultPolicy(), mock(systemone(explicitAsk)))).decision, "ask");
   });
   it("abstains when credentials are absent", async () => {
+    const key = process.env.TYPESAFE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
-    assert.equal((await decisionStage({ type: "decision", model: "typesafe-ai/jev-latest" }, request, defaultPolicy(), () => {
-      throw new Error("must not fetch");
-    })).decision, "abstain");
+    try {
+      assert.equal((await decisionStage({ type: "decision", model: "typesafe-ai/jev-latest" }, request, defaultPolicy(), () => {
+        throw new Error("must not fetch");
+      })).decision, "abstain");
+    } finally {
+      if (key !== undefined) process.env.TYPESAFE_API_KEY = key;
+    }
   });
   it("rejects redirects and times out a local HTTP body", async () => {
     let redirect = true;
