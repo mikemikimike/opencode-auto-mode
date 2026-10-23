@@ -53,7 +53,7 @@ OpenCode V2's default policy allows everything (`{ "action": "*", "resource": "*
 Notes:
 
 - With option 2, saved **Always** approvals are durable `allow` rules, so those actions skip review under `"prompts"`. Review broad ones (for example `edit *` or `shell *`) and remove what you no longer want.
-- Configure a reviewer model that exists (`options.model`). If the model is unavailable, reviews fail and fall back to `ask`.
+- Configure a reviewer model that exists on the `llm` stage as `provider/model`. If the model is unavailable, reviews fail and fall back to `ask`.
 
 ## Configuration examples
 
@@ -74,7 +74,21 @@ This reviews **all agents** because `agents` is omitted. Built-in checks allow s
 }
 ```
 
-Set `options.model` to `{ "id": "your-model", "providerID": "your-provider" }` to select the reviewer model. `review: "all"` reviews eligible actions even when OpenCode would allow them; `review: "prompts"` reviews only actions already requiring approval. OpenCode's explicit denies remain authoritative.
+Set `model` on an `llm` stage to `provider/model` to select the reviewer model. The id follows OpenCode's model selector contract, including an optional `#variant`. Without a stage model, that stage uses OpenCode's default model. `review: "all"` reviews eligible actions even when OpenCode would allow them; `review: "prompts"` reviews only actions already requiring approval. OpenCode's explicit denies remain authoritative.
+
+Repeat `llm` stages to try models in order. A stage that cannot answer abstains and the next stage runs; an explicit allow, deny, or ask stops the pipeline:
+
+```json
+{
+  "classifier": {
+    "stages": [
+      { "type": "static" },
+      { "type": "llm", "model": "anthropic/claude-sonnet-4-5" },
+      { "type": "llm", "model": "openai/gpt-5.2#high" }
+    ]
+  }
+}
+```
 
 > **"Always" answers in permission prompts**
 >
@@ -143,9 +157,9 @@ Rules use [Buf's CEL evaluator](https://github.com/bufbuild/cel-es). Available v
 
 Shell review uses OpenCode's subcommand parsing and a literal-command guard. A permitted `pwd` does not authorize the rest of `pwd ; sudo rm -rf`; the dangerous operation is denied. Unsupported syntax, such as redirects or substitutions, and Windows shells require manual approval.
 
-### Decision providers with an LLM fallback
+### Typed decisions with an LLM fallback
 
-This reviews **all agents** too. Static checks run first, followed by Jev, OpenAI Decisions, local Laya, and an LLM. Remove or reorder provider stages to suit your setup; you do not need all of them.
+This reviews **all agents** too. Static checks run first, followed by typed decision models and an LLM. Remove or reorder stages to suit your setup; you do not need all of them.
 
 ```json
 {
@@ -157,9 +171,9 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
         "classifier": {
           "stages": [
             { "type": "static" },
-            { "type": "jev", "minConfidence": 0.9 },
-            { "type": "openai-decision", "minConfidence": 0.9 },
-            { "type": "laya", "endpoint": "http://127.0.0.1:8000/v1/systemone" },
+            { "type": "decision", "model": "typesafe-ai/jev-latest", "minConfidence": 0.9 },
+            { "type": "decision", "model": "openai/gpt-6-luna", "minConfidence": 0.9 },
+            { "type": "decision", "model": "laya/local", "endpoint": "http://127.0.0.1:8000/v1/systemone" },
             { "type": "llm" }
           ]
         }
@@ -169,14 +183,18 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
 }
 ```
 
-| Stage | Setup |
+| Provider | Setup |
 | --- | --- |
-| `jev` | Set `TYPESAFE_API_KEY`; default model is `jev-latest`. |
-| `openai-decision` | Set `OPENAI_API_KEY`; default model is `gpt-6-luna`. |
-| `laya` | Run a compatible local `/v1/systemone` service; optionally set `LAYA_API_KEY`. Only loopback endpoints are accepted. |
-| `llm` | Uses OpenCode's default model, or the configured reviewer model. |
+| `typesafe-ai` | Set `TYPESAFE_API_KEY`; use the service model ID after `/`, such as `typesafe-ai/jev-latest`. |
+| `openai` | Set `OPENAI_API_KEY`; use the OpenAI decision model ID, such as `openai/gpt-6-luna`. |
+| `laya` | Run a compatible local `/v1/systemone` service; optionally set `LAYA_API_KEY`. Only loopback endpoints are accepted, and the model ID after `/` is sent to the service. |
+| `llm` | Uses OpenCode's default model, or the `provider/model` set on that stage. |
 
-A valid provider allow/deny result below `minConfidence` continues to the next stage. An explicit ask, provider error, timeout, or invalid response requires manual approval and stops the pipeline. Export API keys in the environment of the OpenCode service. Provider stages also accept `model`, `apiKeyEnv`, and `timeoutMs`.
+`decision` stages follow OpenCode's typed Evaluation contract and use the same `provider/model` selector as the rest of the configuration. Model variants are not supported for decision models. Each stage accepts `apiKeyEnv` and `timeoutMs`; local System One stages also accept `endpoint`.
+
+The previous `jev`, `openai-decision`, and `laya` stage types are replaced by `decision`. Set the model selector instead: `typesafe-ai/jev-latest`, `openai/gpt-6-luna`, or `laya/<model>`.
+
+Stages return one of four outcomes. `allow`, `deny`, and `ask` are terminal. `abstain` continues to the next stage. A low-confidence allow abstains, while a low-confidence deny requires manual approval rather than falling through to a possible allow. Provider errors, timeouts, refusals, and invalid responses also abstain so another reviewer can try; if no stage decides, the result is `ask`. Export API keys in the environment of the OpenCode service.
 
 ## Tips: an optional Auto agent
 

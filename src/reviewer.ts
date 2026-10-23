@@ -12,6 +12,13 @@ interface PermissionRequest {
 }
 
 export type Decision = "allow" | "deny" | "ask";
+export type StageDecision = Decision | "abstain";
+
+export interface StageResult {
+  decision: StageDecision;
+  reason: string;
+  stage?: string;
+}
 
 export interface ReviewResult {
   decision: Decision;

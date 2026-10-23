@@ -1,6 +1,6 @@
 import { classify } from "./tiers.js";
 import type { ClassifierStage } from "./config.js";
-import type { PermissionRequest, ReviewResult } from "./reviewer.js";
+import type { PermissionRequest, ReviewResult, StageResult } from "./reviewer.js";
 import { evaluateRules, type RuleMatch } from "./rules.js";
 import { guardShell } from "./shell.js";
 
@@ -18,7 +18,7 @@ function ruleDecision(matches: RuleMatch[]): ReviewResult | undefined {
 export async function compositeDecision(
   stages: ClassifierStage[],
   request: PermissionRequest,
-  review: (stage: Exclude<ClassifierStage, { type: "static" } | { type: "rules" }>) => Promise<ReviewResult | undefined>,
+  review: (stage: Exclude<ClassifierStage, { type: "static" } | { type: "rules" }>) => Promise<StageResult>,
 ): Promise<ReviewResult> {
   const shellResult = request.action === "shell" ? guardShell(request.resources) : undefined;
   if (shellResult?.decision === "deny") return { ...shellResult, stage: "shell-guard" };
@@ -35,6 +35,7 @@ export async function compositeDecision(
     if (result) return result;
   }
   if (shellResult) return { ...shellResult, stage: "shell-guard" };
+  let abstained: string | undefined;
   for (const stage of stages) {
     if (stage.type === "static") {
       const result = classify(request.action, request.resources, {
@@ -46,8 +47,13 @@ export async function compositeDecision(
       if (result) return result;
     } else {
       const result = await review(stage);
-      if (result) return { ...result, stage: result.stage ?? stage.type };
+      if (result.decision === "abstain") { abstained = result.reason; continue; }
+      return { decision: result.decision, reason: result.reason, stage: result.stage ?? stage.type };
     }
   }
-  return { decision: "ask", reason: "No classifier made a decision", stage: "none" };
+  return {
+    decision: "ask",
+    reason: abstained ? `No classifier made a decision (${abstained})` : "No classifier made a decision",
+    stage: "none",
+  };
 }
