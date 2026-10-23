@@ -157,9 +157,9 @@ Rules use [Buf's CEL evaluator](https://github.com/bufbuild/cel-es). Available v
 
 Shell review uses OpenCode's subcommand parsing and a literal-command guard. A permitted `pwd` does not authorize the rest of `pwd ; sudo rm -rf`; the dangerous operation is denied. Unsupported syntax, such as redirects or substitutions, and Windows shells require manual approval.
 
-### Decision providers with an LLM fallback
+### Typed decisions with an LLM fallback
 
-This reviews **all agents** too. Static checks run first, followed by Jev, OpenAI Decisions, local Laya, and an LLM. Remove or reorder provider stages to suit your setup; you do not need all of them.
+This reviews **all agents** too. Static checks run first, followed by typed decision models and an LLM. Remove or reorder stages to suit your setup; you do not need all of them.
 
 ```json
 {
@@ -171,9 +171,9 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
         "classifier": {
           "stages": [
             { "type": "static" },
-            { "type": "jev", "minConfidence": 0.9 },
-            { "type": "openai-decision", "minConfidence": 0.9 },
-            { "type": "laya", "endpoint": "http://127.0.0.1:8000/v1/systemone" },
+            { "type": "decision", "model": "typesafe-ai/jev-latest", "minConfidence": 0.9 },
+            { "type": "decision", "model": "openai/gpt-6-luna", "minConfidence": 0.9 },
+            { "type": "decision", "model": "laya/local", "endpoint": "http://127.0.0.1:8000/v1/systemone" },
             { "type": "llm" }
           ]
         }
@@ -183,14 +183,18 @@ This reviews **all agents** too. Static checks run first, followed by Jev, OpenA
 }
 ```
 
-| Stage | Setup |
+| Provider | Setup |
 | --- | --- |
-| `jev` | Set `TYPESAFE_API_KEY`; default model is `jev-latest`. |
-| `openai-decision` | Set `OPENAI_API_KEY`; default model is `gpt-6-luna`. |
-| `laya` | Run a compatible local `/v1/systemone` service; optionally set `LAYA_API_KEY`. Only loopback endpoints are accepted. |
+| `typesafe-ai` | Set `TYPESAFE_API_KEY`; use the service model ID after `/`, such as `typesafe-ai/jev-latest`. |
+| `openai` | Set `OPENAI_API_KEY`; use the OpenAI decision model ID, such as `openai/gpt-6-luna`. |
+| `laya` | Run a compatible local `/v1/systemone` service; optionally set `LAYA_API_KEY`. Only loopback endpoints are accepted, and the model ID after `/` is sent to the service. |
 | `llm` | Uses OpenCode's default model, or the `provider/model` set on that stage. |
 
-Stages return one of four outcomes. `allow`, `deny`, and `ask` are terminal. `abstain` continues to the next stage. A low-confidence allow abstains, while a low-confidence deny requires manual approval rather than falling through to a possible allow. Provider errors, timeouts, refusals, and invalid responses also abstain so another reviewer can try; if no stage decides, the result is `ask`. Export API keys in the environment of the OpenCode service. Provider stages also accept `model`, `apiKeyEnv`, and `timeoutMs`.
+`decision` stages follow OpenCode's typed Evaluation contract and use the same `provider/model` selector as the rest of the configuration. Model variants are not supported for decision models. Each stage accepts `apiKeyEnv` and `timeoutMs`; local System One stages also accept `endpoint`.
+
+The previous `jev`, `openai-decision`, and `laya` stage types are replaced by `decision`. Set the model selector instead: `typesafe-ai/jev-latest`, `openai/gpt-6-luna`, or `laya/<model>`.
+
+Stages return one of four outcomes. `allow`, `deny`, and `ask` are terminal. `abstain` continues to the next stage. A low-confidence allow abstains, while a low-confidence deny requires manual approval rather than falling through to a possible allow. Provider errors, timeouts, refusals, and invalid responses also abstain so another reviewer can try; if no stage decides, the result is `ask`. Export API keys in the environment of the OpenCode service.
 
 ## Tips: an optional Auto agent
 

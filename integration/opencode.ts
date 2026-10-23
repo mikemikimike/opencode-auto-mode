@@ -130,9 +130,16 @@ function stage(type: string): ClassifierStage {
     { expression: 'action == "shell" && resource == "pwd"', decision: "allow" },
     { expression: 'action == "shell" && resource == "touch denied-file"', decision: "deny" },
   ] };
-  if (type === "laya") return { type, endpoint: `${endpoint}/v1/systemone`, timeoutMs: 100 };
-  if (type === "jev" || type === "openai-decision") return { type, apiKeyEnv: "AUTO_MODE_INTEGRATION_API_KEY", timeoutMs: 100 };
+  if (type === "laya") return { type: "decision", model: "laya/local", endpoint: `${endpoint}/v1/systemone`, timeoutMs: 100 };
+  if (type === "typesafe-ai") return { type: "decision", model: "typesafe-ai/jev-latest", apiKeyEnv: "AUTO_MODE_INTEGRATION_API_KEY", timeoutMs: 100 };
+  if (type === "openai") return { type: "decision", model: "openai/gpt-6-luna", apiKeyEnv: "AUTO_MODE_INTEGRATION_API_KEY", timeoutMs: 100 };
   return { type } as ClassifierStage;
+}
+function providerRoute(type: string): string {
+  return type === "typesafe-ai" ? "jev" : type === "openai" ? "openai-decision" : type;
+}
+function callName(type: string): string {
+  return type === "llm" ? "llm:triage" : providerRoute(type);
 }
 async function fixture(options: AutoModeOptions = {}, permissions: unknown[] = [{ action: "*", resource: "*", effect: "ask" }]) {
   const directory = join(root, `case-${++caseCount}`); mkdirSync(directory);
@@ -178,7 +185,7 @@ async function run(name: string, test: () => Promise<void>) {
 try {
   const info = await until(() => api("/api/info"), (value) => value.version.startsWith("2."));
   console.log(`OpenCode ${info.version}; artifacts ${root}`);
-  const types = ["static", "rules", "jev", "openai-decision", "laya", "llm"];
+  const types = ["static", "rules", "typesafe-ai", "openai", "laya", "llm"];
   const combinations = new Map<string, string[]>();
   for (let mask = 1; mask < 64; mask++) {
     const selected = types.filter((_, index) => mask & (1 << index));
@@ -191,19 +198,21 @@ try {
     calls.length = 0;
     await expectPermission(f, selected.includes("llm") ? "allow" : "ask");
     const reached = selected.slice(0, selected.includes("llm") ? selected.indexOf("llm") + 1 : undefined)
-      .filter((type) => type !== "static" && type !== "rules").map((type) => type === "llm" ? "llm:triage" : type);
+      .filter((type) => type !== "static" && type !== "rules").map(callName);
     assert.deepEqual(calls, reached, `${name} cascade`);
     calls.length = 0;
     await expectPermission(f, selected.some((type) => ["static", "rules", "llm"].includes(type)) ? "allow" : "ask", ["pwd"]);
     if (selected.includes("rules")) { calls.length = 0; await expectPermission(f, "deny", ["touch denied-file"]); assert.deepEqual(calls, []); }
     if (selected.includes("static")) { calls.length = 0; await expectPermission(f, "deny", ["sudo rm -rf /"]); assert.deepEqual(calls, []); }
   });
-  for (const type of ["jev", "openai-decision", "laya"]) {
+  for (const type of ["typesafe-ai", "openai", "laya"]) {
     for (const mode of ["allow", "deny", "ask", "malformed", "failure", "timeout"] as Mode[]) await run(`${type}:${mode}`, async () => {
       const f = await fixture({ classifier: { stages: [stage(type), stage("llm")] } });
-      profile = { modes: { [type]: mode } }; calls.length = 0;
-      await expectPermission(f, mode === "allow" || mode === "deny" ? mode : "ask");
-      assert.deepEqual(calls, [type]);
+      const route = providerRoute(type);
+      profile = { modes: { [route]: mode } }; calls.length = 0;
+      const terminal = mode === "allow" || mode === "deny" || mode === "ask";
+      await expectPermission(f, terminal ? mode : "allow");
+      assert.deepEqual(calls, terminal ? [route] : [route, "llm:triage"]);
     });
   }
   for (const verdict of ["ALLOW: authorized", "DENY: out of scope", "ASK: uncertain", "allowance unavailable", "ALLOW: yes\nDENY: no"]) await run(`llm:${verdict}`, async () => {
@@ -239,8 +248,8 @@ try {
   await run("prompt-only scope and missing credentials", async () => {
     const f = await fixture({ review: "prompts", classifier: { stages: [stage("llm")] } }, [{ action: "*", resource: "*", effect: "allow" }]);
     calls.length = 0; await expectPermission(f, "allow"); assert.deepEqual(calls, []);
-    const missing = await fixture({ classifier: { stages: [{ type: "jev", apiKeyEnv: "AUTO_MODE_MISSING_TEST_KEY" }, stage("llm")] } });
-    calls.length = 0; await expectPermission(missing, "ask"); assert.deepEqual(calls, []);
+    const missing = await fixture({ classifier: { stages: [{ type: "decision", model: "typesafe-ai/jev-latest", apiKeyEnv: "AUTO_MODE_MISSING_TEST_KEY" }, stage("llm")] } });
+    calls.length = 0; await expectPermission(missing, "allow"); assert.deepEqual(calls, ["llm:triage"]);
   });
   await run("CEL coverage, errors, limits, and ask precedence", async () => {
     const covered = await fixture({ classifier: { stages: [{ type: "rules", rules: [
@@ -294,8 +303,8 @@ try {
     { name: "LLM deny", stages: [stage("llm")], expected: "deny", profile: { triage: "BLOCK", verdict: "DENY: out of scope" } },
     { name: "LLM ask", stages: [stage("llm")], expected: "ask", profile: { triage: "BLOCK", verdict: "ASK: uncertain" } },
     { name: "full cascade", stages: types.map(stage), expected: "allow", profile: {}, reached: ["jev", "openai-decision", "laya", "llm:triage"] },
-    ...["jev", "openai-decision", "laya"].flatMap((type) => (["allow", "deny", "ask"] as Verdict[]).map((expected) =>
-      ({ name: `${type} ${expected}`, stages: [stage(type)], expected, profile: { modes: { [type]: expected } } }))),
+    ...["typesafe-ai", "openai", "laya"].flatMap((type) => (["allow", "deny", "ask"] as Verdict[]).map((expected) =>
+      ({ name: `${type} ${expected}`, stages: [stage(type)], expected, profile: { modes: { [providerRoute(type)]: expected } } }))),
   ];
   for (const test of toolCases) await run(`real shell: ${test.name}`, async () => {
     const f = await fixture({ classifier: { stages: test.stages } });

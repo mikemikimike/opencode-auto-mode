@@ -7,11 +7,11 @@ import { scanResultContent, withInjectionWarning } from "./probe.js";
 import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult, type StageResult } from "./reviewer.js";
 import { parseOptions, parseReviewerModel, stagesFor, type ReviewerModelRef } from "./config.js";
 import { compositeDecision } from "./classifier.js";
-import { providerDecision } from "./providers.js";
+import { decisionStage } from "./decisions.js";
 import { createAuditLog } from "./audit.js";
 import { createOtlpExporter } from "./otlp.js";
 
-export type { AutoModeOptions, ClassifierStage, DecisionProvider, UserRule, ReviewerModel } from "./config.js";
+export type { AutoModeOptions, ClassifierStage, DecisionProvider, DecisionStage, UserRule, ReviewerModel } from "./config.js";
 
 export default Plugin.define({
   id: "opencode-auto-mode",
@@ -57,7 +57,7 @@ export default Plugin.define({
           const policy = defaultPolicy(options);
           try {
             return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model) :
-              await providerDecision(stage, request, policy);
+              await decisionStage(stage, request, policy);
           } catch {
             return { decision: "abstain", reason: `${stage.type} reviewer unavailable` };
           }

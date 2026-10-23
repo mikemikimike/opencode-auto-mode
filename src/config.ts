@@ -8,16 +8,19 @@ export type ReviewerModel = string;
 export type ReviewerModelRef = { id: string; providerID: string; variant?: string };
 export type UserRule = { expression: string; decision: Decision };
 export type DecisionProvider = {
-  model?: string;
   apiKeyEnv?: string;
   minConfidence?: number;
   timeoutMs?: number;
 };
+export type DecisionStage = {
+  type: "decision";
+  model: string;
+  endpoint?: string;
+} & DecisionProvider;
 export type ClassifierStage =
   | { type: "static"; allowInProjectEdits?: boolean }
   | { type: "rules"; rules: UserRule[] }
-  | ({ type: "jev" | "openai-decision" } & DecisionProvider)
-  | ({ type: "laya"; endpoint?: string } & DecisionProvider)
+  | DecisionStage
   | { type: "llm"; model?: ReviewerModel };
 export interface AutoModeOptions extends PolicyOptions {
   review?: "all" | "prompts";
@@ -64,7 +67,7 @@ export function localEndpoint(value: string): string {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) ||
       !['127.0.0.1', '[::1]'].includes(url.hostname) || url.username || url.password || url.search || url.hash ||
-      url.pathname !== '/v1/systemone') throw new Error("Laya requires a loopback /v1/systemone endpoint");
+      url.pathname !== '/v1/systemone') throw new Error("Local System One requires a loopback /v1/systemone endpoint");
   return url.href;
 }
 
@@ -80,19 +83,13 @@ function otlp(value: unknown): value is OtlpOptions {
     value.timeoutMs >= 1 && value.timeoutMs <= 10_000);
 }
 
-function stage(value: unknown): value is ClassifierStage {
-  if (!object(value)) return false;
-  if (value.type === "static") return only(value, ["type", "allowInProjectEdits"]) &&
-    (value.allowInProjectEdits === undefined || typeof value.allowInProjectEdits === "boolean");
-  if (value.type === "rules") return only(value, ["type", "rules"]) && Array.isArray(value.rules) &&
-    value.rules.length <= 256 && value.rules.every(rule);
-  if (value.type === "llm") return only(value, ["type", "model"]) &&
-    (value.model === undefined || model(value.model));
-  if (typeof value.type !== "string" || !["jev", "openai-decision", "laya"].includes(value.type)) return false;
-  if (!only(value, value.type === "laya" ?
-      ["type", "model", "apiKeyEnv", "minConfidence", "timeoutMs", "endpoint"] :
-      ["type", "model", "apiKeyEnv", "minConfidence", "timeoutMs"])) return false;
-  if (value.model !== undefined && !text(value.model)) return false;
+export const DECISION_PROVIDERS = ["typesafe-ai", "laya", "openai"] as const;
+
+function decision(value: Record<string, unknown>): value is DecisionStage {
+  if (!only(value, ["type", "model", "apiKeyEnv", "minConfidence", "timeoutMs", "endpoint"])) return false;
+  if (!model(value.model)) return false;
+  const ref = parseReviewerModel(value.model);
+  if (ref.variant !== undefined || !(DECISION_PROVIDERS as readonly string[]).includes(ref.providerID)) return false;
   if (value.apiKeyEnv !== undefined &&
       (typeof value.apiKeyEnv !== "string" || !/^[A-Z_][A-Z0-9_]{0,127}$/.test(value.apiKeyEnv))) return false;
   if (value.minConfidence !== undefined &&
@@ -102,10 +99,21 @@ function stage(value: unknown): value is ClassifierStage {
       (typeof value.timeoutMs !== "number" || !Number.isInteger(value.timeoutMs) ||
        value.timeoutMs < 1 || value.timeoutMs > 30_000)) return false;
   if (value.endpoint !== undefined) {
-    if (!text(value.endpoint)) return false;
+    if (ref.providerID !== "laya" || !text(value.endpoint)) return false;
     try { localEndpoint(value.endpoint); } catch { return false; }
   }
   return true;
+}
+
+function stage(value: unknown): value is ClassifierStage {
+  if (!object(value)) return false;
+  if (value.type === "static") return only(value, ["type", "allowInProjectEdits"]) &&
+    (value.allowInProjectEdits === undefined || typeof value.allowInProjectEdits === "boolean");
+  if (value.type === "rules") return only(value, ["type", "rules"]) && Array.isArray(value.rules) &&
+    value.rules.length <= 256 && value.rules.every(rule);
+  if (value.type === "llm") return only(value, ["type", "model"]) &&
+    (value.model === undefined || model(value.model));
+  return value.type === "decision" && decision(value);
 }
 
 export function parseOptions(value: unknown): AutoModeOptions {
