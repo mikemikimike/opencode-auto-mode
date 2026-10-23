@@ -36,7 +36,7 @@ export default Plugin.define({
       recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: "reviewing", action: event.action.slice(0, 128), reason: "", at: Date.now() });
       const startedAt = Date.now();
       const hostEffect = event.effect;
-      let failed = false;
+      let failure: string | undefined;
       let result: ReviewResult;
       try {
         const info = await withTimeout(ctx.session.get({ sessionID: event.sessionID }), 3_000).catch(() => undefined);
@@ -58,8 +58,8 @@ export default Plugin.define({
           return stage.type === "llm" ? llmDecision(ctx, request, policy, stage.model ?? options?.model) :
             providerDecision(stage, request, policy);
         });
-      } catch {
-        failed = true;
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
         result = { decision: "ask", reason: "Auto-mode review failed; please decide yourself", stage: "error" };
       }
       event.effect = result.decision;
@@ -74,7 +74,7 @@ export default Plugin.define({
         ts: new Date().toISOString(), reviewID, sessionID: event.sessionID, agent: event.agent,
         action: event.action, resources: [...event.resources], hostEffect,
         decision: result.decision, stage: result.stage ?? "unknown", reason: result.reason,
-        durationMs: Date.now() - startedAt, ...(failed ? { error: true } : {}),
+        durationMs: Date.now() - startedAt, ...(failure !== undefined ? { error: true, errorDetail: failure } : {}),
       };
       for (const sink of sinks) sink.write(auditRecord);
       recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: event.effect, reason: "", at: Date.now() });

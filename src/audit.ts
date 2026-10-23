@@ -15,6 +15,7 @@ export interface AuditRecord {
   reason: string;
   durationMs: number;
   error?: boolean;
+  errorDetail?: string;
 }
 
 export interface AuditLog { write(record: AuditRecord): void }
@@ -47,6 +48,7 @@ export function createAuditLog(setting: boolean | string | undefined): AuditLog 
           ...record,
           resources: record.resources.slice(0, MAX_RESOURCES).map((resource) => clip(resource, MAX_RESOURCE_CHARS)),
           reason: clip(record.reason, MAX_REASON_CHARS),
+          ...(record.errorDetail === undefined ? {} : { errorDetail: clip(record.errorDetail, MAX_REASON_CHARS) }),
         };
         fs.writeSync(fd, `${JSON.stringify(safe)}\n`);
       } catch {

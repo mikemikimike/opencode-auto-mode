@@ -43,6 +43,7 @@ export function toLogRecord(record: AuditRecord) {
       attr("stage", record.stage),
       attr("duration_ms", record.durationMs),
       attr("error", record.error === true),
+      ...(record.errorDetail === undefined ? [] : [attr("error.detail", record.errorDetail)]),
     ],
   };
 }
