@@ -54,13 +54,16 @@ describe("composite classifiers", () => {
   it("rejects malformed config and unsafe local endpoints", () => {
     for (const value of [null, { classifer: {} }, { classifier: { stages: [] } },
       { classifier: { stages: [{ type: "llm", model: { id: "x" } }] } },
+      { classifier: { stages: [{ type: "llm", model: "model-only" }] } },
       { classifier: { stages: [{ type: "jev", minConfidence: NaN }] } },
       { classifier: { stages: [{ type: "laya", endpoint: "http://example.com/v1/systemone" }] } },
       { classifier: { stages: [{ type: "laya", endpoint: "http://127.0.0.1/v1/systemone?x=y" }] } },
-      { classifier: { stages: [{ type: "static", allowInProjectEdits: "true" }] } }])
+      { classifier: { stages: [{ type: "static", allowInProjectEdits: "true" }] } },
+      { model: "provider/model" }])
       assert.throws(() => parseOptions(value));
     assert.deepEqual(stagesFor(parseOptions({})).map((stage) => stage.type), ["static", "llm"]);
     assert.equal(parseOptions({ classifier: { stages: [{ type: "laya" }] } }).classifier?.stages[0].type, "laya");
+    assert.equal(parseOptions({ classifier: { stages: [{ type: "llm", model: "provider/model#high" }] } }).classifier?.stages[0].type, "llm");
     assert.throws(() => parseOptions({ classifier: { stages: [{ type: "rules", rules: [{ expression: 'action == "shell"', decision: ["allow"] }] }] } }));
   });
 });

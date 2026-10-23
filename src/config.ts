@@ -1,9 +1,11 @@
+import { Model } from "@opencode/schema/model";
 import type { PolicyOptions } from "./policy.js";
 import type { Decision } from "./reviewer.js";
 import { compileExpression } from "./rules.js";
 import { logsUrl, type OtlpOptions } from "./otlp.js";
 
-export type ReviewerModel = { id: string; providerID: string; variant?: string };
+export type ReviewerModel = string;
+export type ReviewerModelRef = { id: string; providerID: string; variant?: string };
 export type UserRule = { expression: string; decision: Decision };
 export type DecisionProvider = {
   model?: string;
@@ -18,7 +20,6 @@ export type ClassifierStage =
   | ({ type: "laya"; endpoint?: string } & DecisionProvider)
   | { type: "llm"; model?: ReviewerModel };
 export interface AutoModeOptions extends PolicyOptions {
-  model?: ReviewerModel;
   review?: "all" | "prompts";
   agents?: string[];
   allowInProjectEdits?: boolean;
@@ -39,9 +40,18 @@ function only(value: Record<string, unknown>, keys: string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key));
 }
 
+export function parseReviewerModel(value: string): ReviewerModelRef {
+  const ref = Model.Ref.parse(value);
+  return {
+    id: ref.id,
+    providerID: ref.providerID,
+    ...(ref.variant === undefined ? {} : { variant: ref.variant }),
+  };
+}
+
 function model(value: unknown): value is ReviewerModel {
-  return object(value) && only(value, ["id", "providerID", "variant"]) &&
-    text(value.id) && text(value.providerID) && (value.variant === undefined || text(value.variant));
+  if (typeof value !== "string" || !text(value)) return false;
+  try { parseReviewerModel(value); return true; } catch { return false; }
 }
 
 function rule(value: unknown): value is UserRule {
@@ -102,7 +112,7 @@ export function parseOptions(value: unknown): AutoModeOptions {
   if (!object(value)) throw new Error("Invalid auto-mode options");
   if (!only(value, ["model", "review", "agents", "allowInProjectEdits", "classifier", "trusted", "blocks", "exceptions", "keybinds", "auditLog", "otlp"]))
     throw new Error("Unknown auto-mode option");
-  if (value.model !== undefined && !model(value.model)) throw new Error("Invalid reviewer model");
+  if (value.model !== undefined) throw new Error("Reviewer model must be set on an llm stage");
   if (value.review !== undefined && value.review !== "all" && value.review !== "prompts")
     throw new Error("Invalid review scope");
   for (const key of ["trusted", "blocks", "exceptions", "agents"]) {
@@ -124,6 +134,6 @@ export function parseOptions(value: unknown): AutoModeOptions {
 export function stagesFor(options: AutoModeOptions): ClassifierStage[] {
   return options.classifier?.stages ?? [
     { type: "static", allowInProjectEdits: options.allowInProjectEdits === true },
-    { type: "llm", model: options.model },
+    { type: "llm" },
   ];
 }

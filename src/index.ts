@@ -5,7 +5,7 @@ import { defaultPolicy } from "./policy.js";
 import { extractTranscript } from "./transcript.js";
 import { scanResultContent, withInjectionWarning } from "./probe.js";
 import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult, type StageResult } from "./reviewer.js";
-import { parseOptions, stagesFor, type ReviewerModel } from "./config.js";
+import { parseOptions, parseReviewerModel, stagesFor, type ReviewerModelRef } from "./config.js";
 import { compositeDecision } from "./classifier.js";
 import { providerDecision } from "./providers.js";
 import { createAuditLog } from "./audit.js";
@@ -56,7 +56,7 @@ export default Plugin.define({
             return { decision: "ask", reason: "User authorization context is unavailable" };
           const policy = defaultPolicy(options);
           try {
-            return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model ?? options?.model) :
+            return stage.type === "llm" ? await llmDecision(ctx, request, policy, stage.model) :
               await providerDecision(stage, request, policy);
           } catch {
             return { decision: "abstain", reason: `${stage.type} reviewer unavailable` };
@@ -103,15 +103,16 @@ export default Plugin.define({
 });
 
 interface ReviewerContext {
-  generate: { text(input: { prompt: string; model?: ReviewerModel | null }): Promise<{ text: string }> };
+  generate: { text(input: { prompt: string; model?: ReviewerModelRef | null }): Promise<{ text: string }> };
 }
 
-async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: ReviewerModel): Promise<StageResult> {
+async function llmDecision(ctx: ReviewerContext, request: PermissionRequest, policy: ReturnType<typeof defaultPolicy>, model?: string): Promise<StageResult> {
+  const ref = model ? parseReviewerModel(model) : null;
   const prompt = buildStage1Prompt(request, policy);
   if (Buffer.byteLength(prompt) > 65_536) return { decision: "ask", reason: "Request too large for automatic review" };
-  const triage = await withTimeout(ctx.generate.text({ prompt, model: model ?? null }), 30_000);
+  const triage = await withTimeout(ctx.generate.text({ prompt, model: ref }), 30_000);
   if (parseStage1(triage.text) === "allow") return { decision: "allow", reason: "LLM triage approved" };
-  const response = await withTimeout(ctx.generate.text({ prompt: buildStage2Prompt(request, policy), model: model ?? null }), 30_000);
+  const response = await withTimeout(ctx.generate.text({ prompt: buildStage2Prompt(request, policy), model: ref }), 30_000);
   return parseDecision(response.text);
 }
 

@@ -11,15 +11,16 @@ async function setup(options: unknown = {}, messages: unknown[] = [{ type: "user
   let evaluate!: (event: Evaluation) => Promise<void>;
   let disposed = 0;
   const prompts: string[] = [];
+  const models: ({ id: string; providerID: string; variant?: string } | null | undefined)[] = [];
   const ctx = {
     options,
     permission: { hook: async (_: string, handler: typeof evaluate) => { evaluate = handler; return { dispose: async () => { disposed++; } }; } },
     tool: { hook: async () => ({ dispose: async () => { disposed++; } }) },
     session: { get: async () => ({ location: { directory: "/repo" } }), context: async () => messages },
-    generate: { text: async ({ prompt }: { prompt: string }) => { prompts.push(prompt); return { text: answers.shift() ?? "ASK: unclear" }; } },
+    generate: { text: async ({ prompt, model }: { prompt: string; model?: { id: string; providerID: string; variant?: string } | null }) => { prompts.push(prompt); models.push(model); return { text: answers.shift() ?? "ASK: unclear" }; } },
   };
   const cleanup = await plugin.setup(ctx as unknown as Parameters<typeof plugin.setup>[0]);
-  return { evaluate, prompts, ctx, cleanup: async () => { await cleanup?.(); }, disposed: () => disposed };
+  return { evaluate, prompts, models, ctx, cleanup: async () => { await cleanup?.(); }, disposed: () => disposed };
 }
 function event(effect: Evaluation["effect"] = "ask"): Evaluation {
   return { sessionID: "session-test", agent: "auto", action: "shell", resources: ["touch a"], effect };
@@ -61,6 +62,16 @@ describe("OpenCode permission hook", () => {
     await host.evaluate(pending);
     assert.equal(pending.effect, "allow");
     assert.equal(calls, 2);
+    await host.cleanup();
+  });
+  it("passes a provider/model stage selection to generation", async () => {
+    const host = await setup({ classifier: { stages: [{ type: "llm", model: "anthropic/claude-sonnet-4-5#high" }] } });
+    await host.evaluate(event("allow"));
+    assert.deepEqual(host.models[0], {
+      providerID: "anthropic",
+      id: "claude-sonnet-4-5",
+      variant: "high",
+    });
     await host.cleanup();
   });
   it("applies configured agent and prompt scope", async () => {
