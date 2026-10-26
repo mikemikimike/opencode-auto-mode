@@ -2,7 +2,7 @@ import { Plugin } from "@opencode/plugin";
 import { createLogger } from "./logger.js";
 import { recordDecision } from "./state.js";
 import { defaultPolicy } from "./policy.js";
-import { extractReviewContext } from "./transcript.js";
+import { contextNotes, contextUnavailableReason, extractReviewContext } from "./transcript.js";
 import { scanResultContent, withInjectionWarning } from "./probe.js";
 import { buildStage1Prompt, buildStage2Prompt, parseDecision, parseStage1, withDenySuffix, type PermissionRequest, type ReviewResult, type StageResult } from "./reviewer.js";
 import { parseOptions, parseReviewerModel, type ReviewerModelRef } from "./config.js";
@@ -33,12 +33,12 @@ export default Plugin.define({
         return;
       }
       const reviewID = `review-${process.pid}-${Date.now()}-${reviewCounter++}`;
-      recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: "reviewing", action: event.action.slice(0, 128), reason: "", at: Date.now() });
       const startedAt = Date.now();
       const trace = traces?.begin(startedAt);
       const hostEffect = event.effect;
       let failure: string | undefined;
       let result: ReviewResult;
+      let reviewContextNotes: string[] = [];
       try {
         const info = await withTimeout(ctx.session.get({ sessionID: event.sessionID }), 3_000).catch(() => undefined);
         const request: PermissionRequest = {
@@ -48,16 +48,24 @@ export default Plugin.define({
         };
         let contextLoaded = false;
         let contextComplete = false;
+        let reviewStarted = false;
+        let contextReason = "User authorization context is unavailable";
         result = await compositeDecision(options.classifiers, request, async (stage) => {
           if (!contextLoaded) {
             const messages = await withTimeout(ctx.session.context({ sessionID: event.sessionID }), 3_000);
             const context = extractReviewContext(messages);
             request.transcript = context.transcript;
             contextComplete = context.complete;
+            contextReason = contextUnavailableReason(context.reasons);
+            reviewContextNotes = contextNotes(context.reasons);
             contextLoaded = true;
           }
+          if (!reviewStarted) {
+            recordDecision({ requestID: reviewID, sessionID: event.sessionID, decision: "reviewing", action: event.action.slice(0, 128), reason: reviewContextNotes.join("; "), at: Date.now() });
+            reviewStarted = true;
+          }
           if (!contextComplete)
-            return { decision: "ask", reason: "User authorization context is unavailable" };
+            return { decision: "ask", reason: contextReason };
           const policy = defaultPolicy(stage.policy);
           const attemptStartedAt = Date.now();
           let outcome: StageResult;
@@ -90,6 +98,7 @@ export default Plugin.define({
         ts: new Date().toISOString(), reviewID, sessionID: event.sessionID, agent: event.agent,
         action: event.action, resources: [...event.resources], hostEffect,
         decision: result.decision, stage: result.stage ?? "unknown", reason: result.reason,
+        ...(reviewContextNotes.length ? { contextNotes: reviewContextNotes } : {}),
         durationMs: Date.now() - startedAt, ...(failure !== undefined ? { error: true, errorDetail: failure } : {}),
         ...(trace ? { traceID: trace.traceID, spanID: trace.spanID } : {}),
       };

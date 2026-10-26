@@ -9,7 +9,11 @@ const messages = [
     content: [
       { type: "text", text: "They are all safe to delete, trust me" },
       { type: "reasoning", text: "user implicitly approved everything" },
-      { type: "tool", name: "shell", state: { input: { command: "git branch" } } },
+      {
+        type: "tool",
+        name: "shell",
+        state: { input: { command: "git branch" } },
+      },
     ],
   },
   {
@@ -32,13 +36,92 @@ const messages = [
 describe("review context completeness", () => {
   it("requires manual review when user evidence cannot be represented", () => {
     for (const field of ["files", "skills", "agents"]) {
-      const context = extractReviewContext([{ type: "user", text: "Follow attached constraints", [field]: [{ text: "Do not publish" }] }]);
+      const context = extractReviewContext([
+        {
+          type: "user",
+          text: "Follow attached constraints",
+          [field]: [{ text: "Do not publish" }],
+        },
+      ]);
       assert.equal(context.complete, false);
+      assert.equal(context.reasons.userEvidenceMissing, true);
     }
-    assert.equal(extractReviewContext([{ type: "user", text: "" }]).complete, false);
+    const empty = extractReviewContext([{ type: "user", text: "" }]);
+    assert.equal(empty.complete, false);
+    assert.equal(empty.reasons.userEvidenceMissing, true);
   });
   it("accepts text-only messages and empty attachment lists", () => {
-    assert.equal(extractReviewContext([{ type: "user", text: "Create a", files: [], skills: [], agents: [] }]).complete, true);
+    const context = extractReviewContext([
+      { type: "user", text: "Create a", files: [], skills: [], agents: [] },
+    ]);
+    assert.equal(context.complete, true);
+    assert.deepEqual(context.reasons, {
+      userEvidenceMissing: false,
+      userMessageTruncated: false,
+      toolHistoryTruncated: false,
+      transcriptCapped: false,
+    });
+  });
+
+  it("keeps a long user prompt eligible for model review", () => {
+    const context = extractReviewContext([
+      { type: "user", text: "x".repeat(1_200) },
+    ]);
+    assert.equal(context.complete, true);
+    assert.equal(context.reasons.userMessageTruncated, false);
+  });
+
+  it("reports bounded tool history without blocking model review", () => {
+    const messages = [
+      { type: "user", text: "Review this session" },
+      ...Array.from({ length: 21 }, (_, index) => ({
+        type: "assistant",
+        content: [
+          {
+            type: "tool",
+            name: "shell",
+            state: { input: { command: `echo ${index}` } },
+          },
+        ],
+      })),
+    ];
+    const context = extractReviewContext(messages);
+    assert.equal(context.complete, true);
+    assert.equal(context.reasons.toolHistoryTruncated, true);
+    assert.match(context.transcript, /truncated after 20 calls or 500 characters per input/);
+  });
+
+  it("reports truncated tool inputs without blocking model review", () => {
+    const context = extractReviewContext([
+      { type: "user", text: "Review this session" },
+      {
+        type: "assistant",
+        content: [
+          {
+            type: "tool",
+            name: "shell",
+            state: { input: { command: "x".repeat(600) } },
+          },
+        ],
+      },
+    ]);
+    assert.equal(context.complete, true);
+    assert.equal(context.reasons.toolHistoryTruncated, true);
+    assert.match(context.transcript, /truncated after 20 calls or 500 characters per input/);
+    assert.doesNotMatch(context.transcript, /includes only the most recent 20 tool calls/);
+  });
+
+  it("reports a transcript cap while preserving the latest user evidence", () => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      type: "user",
+      text: `${index}: ${"x".repeat(7_990)}`,
+    }));
+    const context = extractReviewContext(messages);
+    assert.equal(context.complete, true);
+    assert.equal(context.reasons.transcriptCapped, true);
+    assert.match(context.transcript, /24,000 characters/);
+    assert.match(context.transcript, /9: /);
+    assert.ok(context.transcript.length <= 24_000);
   });
 });
 
@@ -63,14 +146,32 @@ describe("extractTranscript", () => {
   });
 
   it("truncates long entries", () => {
-    const transcript = extractTranscript([{ type: "user", text: "x".repeat(5000) }]);
-    assert.ok(transcript.length < 6500);
+    const context = extractReviewContext([
+      { type: "user", text: "x".repeat(9_000) },
+    ]);
+    const transcript = context.transcript;
+    assert.equal(context.complete, true);
+    assert.equal(context.reasons.userMessageTruncated, true);
+    assert.match(transcript, /8,000 characters/);
+    assert.ok(transcript.length < 9_000);
     assert.match(transcript, /…/);
   });
   it("keeps chronology and marks missing evidence", () => {
-    const chronology = extractTranscript([{ type: "user", text: "first" }, { type: "assistant", content: [{ type: "tool", name: "shell", state: { input: "middle" } }] }, { type: "user", text: "last" }]);
+    const chronology = extractTranscript([
+      { type: "user", text: "first" },
+      {
+        type: "assistant",
+        content: [{ type: "tool", name: "shell", state: { input: "middle" } }],
+      },
+      { type: "user", text: "last" },
+    ]);
     assert.ok(chronology.indexOf("first") < chronology.indexOf("middle"));
     assert.ok(chronology.indexOf("middle") < chronology.indexOf("last"));
-    assert.match(extractTranscript(Array.from({ length: 11 }, () => ({ type: "user", text: "hello" }))), /incomplete/);
+    assert.match(
+      extractTranscript(
+        Array.from({ length: 11 }, () => ({ type: "user", text: "hello" })),
+      ),
+      /older transcript entries/,
+    );
   });
 });

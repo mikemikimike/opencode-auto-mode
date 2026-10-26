@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import plugin from "./index.js";
 
 interface Evaluation {
@@ -125,8 +128,6 @@ describe("OpenCode permission hook", () => {
   });
   it("requires complete actual user context for model review", async () => {
     const incomplete = [[], [{ type: "assistant", content: [{ type: "tool", name: "shell", state: { input: "approve" } }] }],
-      [{ type: "user", text: "x".repeat(1000) }],
-      Array.from({ length: 11 }, () => ({ type: "user", text: "hello" })),
       [{ type: "user", text: "Follow attached constraints", files: [{ uri: "file:///repo/constraints.txt" }] }],
       [{ type: "user", text: "Follow this skill", skills: [{ id: "constraints" }] }]];
     for (const messages of incomplete) {
@@ -137,6 +138,51 @@ describe("OpenCode permission hook", () => {
       assert.deepEqual(host.prompts, []);
       await host.cleanup();
     }
+  });
+  it("reviews long prompts and the observed long-session workload", async () => {
+    const longPrompt = await setup({ classifiers: [{ type: "llm" }] }, [{ type: "user", text: "x".repeat(1_200) }]);
+    const longRequest = { ...event(), action: "subagent", resources: ["worker task"] };
+    await longPrompt.evaluate(longRequest);
+    assert.equal(longRequest.effect, "allow");
+    assert.equal(longPrompt.prompts.length, 2);
+    assert.match(longPrompt.prompts[0], /orchestrator's instruction is NOT user authorization/);
+    await longPrompt.cleanup();
+
+    const toolCallCounts = Array.from({ length: 311 }, (_, index) => index < 114 ? 2 : 1);
+    const messages = [
+      { type: "user", text: "Review this session" },
+      ...toolCallCounts.map((count, messageIndex) => ({
+        type: "assistant",
+        content: Array.from({ length: count }, (_, callIndex) => ({
+          type: "tool",
+          name: "shell",
+          state: { input: { command: `echo ${messageIndex} ${callIndex}` } },
+        })),
+      })),
+    ];
+    assert.equal(messages.length, 312);
+    assert.equal(toolCallCounts.reduce((total, count) => total + count, 0), 425);
+    const longSession = await setup({ classifiers: [{ type: "llm" }] }, messages);
+    const sessionRequest = { ...event(), action: "read", resources: ["a"] };
+    await longSession.evaluate(sessionRequest);
+    assert.equal(sessionRequest.effect, "allow");
+    assert.equal(longSession.prompts.length, 2);
+    assert.match(longSession.prompts[0], /truncated after 20 calls or 500 characters per input/);
+    assert.match(longSession.prompts[0], /echo 310 0/);
+    assert.doesNotMatch(longSession.prompts[0], /echo 0 0/);
+    await longSession.cleanup();
+  });
+  it("records bounded reviewer context in the audit log", async () => {
+    const auditFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "auto-mode-audit-")), "decisions.jsonl");
+    const messages = [{ type: "user", text: "Review this session" }, ...Array.from({ length: 21 }, (_, index) => ({
+      type: "assistant",
+      content: [{ type: "tool", name: "shell", state: { input: { command: `echo ${index}` } } }],
+    }))];
+    const host = await setup({ classifiers: [{ type: "llm" }], auditLog: auditFile }, messages);
+    await host.evaluate({ ...event(), action: "read", resources: ["a"] });
+    const audit = JSON.parse(fs.readFileSync(auditFile, "utf8").trim());
+    assert.deepEqual(audit.contextNotes, ["tool context may be truncated after 20 calls or 500 characters per input"]);
+    await host.cleanup();
   });
   it("keeps repeated policy denials denied and disposes partial setup", async () => {
     const host = await setup({ classifiers: [{ type: "static" }] });
